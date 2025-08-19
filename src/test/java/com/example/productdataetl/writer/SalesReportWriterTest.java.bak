@@ -1,0 +1,186 @@
+package com.example.productdataetl.writer;
+
+import com.example.productdataetl.dto.SalesReport;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.batch.item.Chunk;
+import org.springframework.batch.item.file.FlatFileItemWriter;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Unit tests for SalesReportWriter configuration class.
+ * Tests the FlatFileItemWriter configuration for CSV file generation.
+ */
+class SalesReportWriterTest {
+
+    @TempDir
+    Path tempDir;
+
+    private SalesReportWriter salesReportWriter;
+    private FlatFileItemWriter<SalesReport> writer;
+
+    @BeforeEach
+    void setUp() {
+        salesReportWriter = new SalesReportWriter();
+        writer = salesReportWriter.salesReportCsvWriter();
+    }
+
+    @Test
+    void testSalesReportCsvWriterConfiguration() {
+        // Then
+        assertNotNull(writer, "Writer should not be null");
+        assertEquals("salesReportCsvWriter", writer.getName());
+        
+        // Verify resource is set correctly
+        FileSystemResource resource = (FileSystemResource) ReflectionTestUtils.getField(writer, "resource");
+        assertNotNull(resource);
+        assertEquals("sales_report.csv", resource.getFilename());
+    }
+
+    @Test
+    void testWriterName() {
+        // Then
+        assertEquals("salesReportCsvWriter", writer.getName());
+    }
+
+    @Test
+    void testCsvFileGeneration() throws Exception {
+        // Given
+        Path outputFile = tempDir.resolve("test_sales_report.csv");
+        
+        // Create a new writer with temp directory
+        FlatFileItemWriter<SalesReport> testWriter = createTestWriter(outputFile);
+        
+        List<SalesReport> salesReports = Arrays.asList(
+                new SalesReport(1L, "Laptop", new BigDecimal("999.99")),
+                new SalesReport(2L, "Monitor", new BigDecimal("299.50")),
+                new SalesReport(3L, "Keyboard", new BigDecimal("89.99"))
+        );
+
+        // When
+        testWriter.open(new org.springframework.batch.item.ExecutionContext());
+        testWriter.write(Chunk.of(salesReports));
+        testWriter.close();
+
+        // Then
+        assertTrue(Files.exists(outputFile), "Output file should be created");
+        
+        List<String> lines = Files.readAllLines(outputFile);
+        assertEquals(4, lines.size(), "Should have header + 3 data lines");
+        
+        // Verify header
+        assertEquals("productId,productName,price", lines.get(0));
+        
+        // Verify data lines
+        assertEquals("1,Laptop,999.99", lines.get(1));
+        assertEquals("2,Monitor,299.50", lines.get(2));
+        assertEquals("3,Keyboard,89.99", lines.get(3));
+    }
+
+    @Test
+    void testCsvHeaderGeneration() throws Exception {
+        // Given
+        Path outputFile = tempDir.resolve("test_header.csv");
+        FlatFileItemWriter<SalesReport> testWriter = createTestWriter(outputFile);
+
+        // When
+        testWriter.open(new org.springframework.batch.item.ExecutionContext());
+        testWriter.write(Chunk.of()); // Write empty chunk to trigger header only
+        testWriter.close();
+
+        // Then
+        assertTrue(Files.exists(outputFile), "Output file should be created");
+        
+        List<String> lines = Files.readAllLines(outputFile);
+        assertEquals(1, lines.size(), "Should have only header line");
+        assertEquals("productId,productName,price", lines.get(0));
+    }
+
+    @Test
+    void testCsvFormatting() throws Exception {
+        // Given
+        Path outputFile = tempDir.resolve("test_formatting.csv");
+        FlatFileItemWriter<SalesReport> testWriter = createTestWriter(outputFile);
+        
+        SalesReport report = new SalesReport(123L, "Product with, comma", new BigDecimal("1234.56"));
+
+        // When
+        testWriter.open(new org.springframework.batch.item.ExecutionContext());
+        testWriter.write(Chunk.of(report));
+        testWriter.close();
+
+        // Then
+        List<String> lines = Files.readAllLines(outputFile);
+        assertEquals(2, lines.size());
+        assertEquals("productId,productName,price", lines.get(0));
+        assertEquals("123,Product with, comma,1234.56", lines.get(1));
+    }
+
+    @Test
+    void testEmptyWrite() throws Exception {
+        // Given
+        Path outputFile = tempDir.resolve("test_empty.csv");
+        FlatFileItemWriter<SalesReport> testWriter = createTestWriter(outputFile);
+
+        // When
+        testWriter.open(new org.springframework.batch.item.ExecutionContext());
+        testWriter.write(Chunk.of()); // Empty chunk
+        testWriter.close();
+
+        // Then
+        assertTrue(Files.exists(outputFile), "Output file should be created even for empty write");
+        
+        List<String> lines = Files.readAllLines(outputFile);
+        assertEquals(1, lines.size(), "Should have only header line");
+        assertEquals("productId,productName,price", lines.get(0));
+    }
+
+    @Test
+    void testMultipleWrites() throws Exception {
+        // Given
+        Path outputFile = tempDir.resolve("test_multiple.csv");
+        FlatFileItemWriter<SalesReport> testWriter = createTestWriter(outputFile);
+        
+        List<SalesReport> batch1 = Arrays.asList(
+                new SalesReport(1L, "Product1", new BigDecimal("100.00"))
+        );
+        
+        List<SalesReport> batch2 = Arrays.asList(
+                new SalesReport(2L, "Product2", new BigDecimal("200.00"))
+        );
+
+        // When
+        testWriter.open(new org.springframework.batch.item.ExecutionContext());
+        testWriter.write(Chunk.of(batch1));
+        testWriter.write(Chunk.of(batch2));
+        testWriter.close();
+
+        // Then
+        List<String> lines = Files.readAllLines(outputFile);
+        assertEquals(3, lines.size(), "Should have header + 2 data lines");
+        assertEquals("productId,productName,price", lines.get(0));
+        assertEquals("1,Product1,100.00", lines.get(1));
+        assertEquals("2,Product2,200.00", lines.get(2));
+    }
+
+    private FlatFileItemWriter<SalesReport> createTestWriter(Path outputFile) {
+        SalesReportWriter writerConfig = new SalesReportWriter();
+        FlatFileItemWriter<SalesReport> testWriter = writerConfig.salesReportCsvWriter();
+        
+        // Override the resource to use temp directory
+        ReflectionTestUtils.setField(testWriter, "resource", new FileSystemResource(outputFile.toFile()));
+        
+        return testWriter;
+    }
+}
